@@ -346,7 +346,7 @@
 </div>
 
 <script>
-// THEME
+// ── THEME ──
 function toggleTheme(){
   const dark=document.documentElement.getAttribute('data-theme')==='dark';
   document.documentElement.setAttribute('data-theme',dark?'light':'dark');
@@ -354,7 +354,7 @@ function toggleTheme(){
   document.getElementById('tlabel').textContent=dark?'Dark':'Light';
 }
 
-// TABS
+// ── TABS ──
 const TABS=['basic','sci','math','unit','currency'];
 function switchTab(name){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',TABS[i]===name));
@@ -362,148 +362,339 @@ function switchTab(name){
   document.getElementById('panel-'+name).classList.add('active');
 }
 
-// BASIC
+// ── CLEAN NUMBER (show 15 not 15.0) ──
+function clean(val){
+  const n=parseFloat(val);
+  if(isNaN(n)) return String(val);
+  if(Number.isInteger(n)) return String(Math.trunc(n));
+  return String(Math.round(n*1e10)/1e10);
+}
+
+// ── LOCAL HISTORY (stored in localStorage) ──
+let localHistory = JSON.parse(localStorage.getItem('calcHistory')||'[]');
+
+function saveLocalHistory(){
+  try{ localStorage.setItem('calcHistory', JSON.stringify(localHistory.slice(0,100))); }
+  catch(e){}
+}
+
+function addHistory(expr, result){
+  const t=new Date();
+  const time=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+  localHistory.unshift({expression:expr, result:clean(result), time});
+  saveLocalHistory();
+  renderHistory();
+}
+
+function renderHistory(){
+  const list=document.getElementById('hist-list');
+  if(!localHistory.length){list.innerHTML='<li class="empty">No calculations yet</li>';return;}
+  list.innerHTML=localHistory.map((h,i)=>
+    `<li>
+      <div class="h-top">
+        <div class="h-time">${h.time||''}</div>
+        <button class="h-del" onclick="deleteOne(${i})" title="Delete">✕</button>
+      </div>
+      <div class="h-expr">${h.expression}</div>
+      <div class="h-res">= ${h.result}</div>
+    </li>`
+  ).join('');
+}
+
+function deleteOne(i){
+  localHistory.splice(i,1);
+  saveLocalHistory();
+  renderHistory();
+}
+
+function clearHistory(){
+  localHistory=[];
+  saveLocalHistory();
+  renderHistory();
+}
+
+function downloadHistory(){
+  const lines=['Calculator History','='.repeat(40)];
+  localHistory.forEach((h,i)=>lines.push(`${i+1}. [${h.time}]  ${h.expression} = ${h.result}`));
+  const blob=new Blob([lines.join('\n')],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='calculator_history.txt';
+  a.click();
+}
+
+function loadHistory(){ renderHistory(); }
+
+// ── HELPER ──
+function sym(o){return{'+':'+','-':'−','*':'×','/':'÷','%':'%','power':'ⁿ','//':'//'}[o]||o;}
+function showErr(msg,el){el.textContent=msg;setTimeout(()=>el.textContent='',2500);}
+
+// ── BASIC CALCULATOR (fully offline) ──
 let cur='0',prev=null,op=null,fresh=false;
 const D=()=>document.getElementById('cur');
 const E=()=>document.getElementById('expr');
 const Err=()=>document.getElementById('err');
-function showErr(msg,el){el.textContent=msg;setTimeout(()=>el.textContent='',2500);}
+
 function press(v){
   Err().textContent='';
-  if(v==='+/-'){cur=String(parseFloat(cur)*-1);D().textContent=cur;return;}
+  if(v==='+/-'){
+    const n=parseFloat(cur)*-1;
+    cur=clean(n);
+    D().textContent=cur;
+    return;
+  }
   if(fresh){cur='';fresh=false;}
   if(v==='.'&&cur.includes('.'))return;
   cur=(cur==='0'&&v!=='.')?v:cur+v;
-  D().textContent=cur;D().classList.remove('res');
+  D().textContent=cur;
+  D().classList.remove('res');
 }
+
 function setOp(o){
   Err().textContent='';
-  if(prev!==null&&op&&!fresh)equals(true);
-  prev=cur;op=o;fresh=true;
-  const pd=Number.isInteger(parseFloat(prev))&&!String(prev).includes('.')?prev:clean(parseFloat(prev));E().textContent=`${pd} ${sym(o)}`;
+  if(prev!==null&&op&&!fresh) equals(true);
+  prev=cur; op=o; fresh=true;
+  E().textContent=clean(parseFloat(prev))+' '+sym(o);
 }
-async function equals(chain=false){
-  if(!op||prev===null)return;
-  const map={'+':'add','-':'subtract','*':'multiply','/':'divide','%':'modulus','power':'power','//':'floor'};
-  try{
-    const r=await post('/calculate',{operation:map[op]||op,a:parseFloat(prev),b:parseFloat(cur)});
-    if(r.error){showErr(r.error,Err());return;}
-    E().textContent=r.expression;cur=clean(r.result);
-    D().textContent=cur;if(!chain)D().classList.add('res');
-    prev=null;op=null;fresh=true;if(!chain)loadHistory();
-  }catch(e){showErr('Server error',Err());}
-}
-function sym(o){return{'+':'+','-':'−','*':'×','/':'÷','%':'%','power':'ⁿ','//':'//'}[o]||o;}
-function backspace(){if(fresh||cur.length<=1){cur='0';fresh=false;}else cur=cur.slice(0,-1);D().textContent=cur;}
-function clearAll(){cur='0';prev=null;op=null;fresh=false;D().textContent='0';D().classList.remove('res');E().textContent='';Err().textContent='';}
 
-// SCIENTIFIC
+function calcLocal(op, a, b){
+  if(op==='+') return a+b;
+  if(op==='-') return a-b;
+  if(op==='*') return a*b;
+  if(op==='/'){
+    if(b===0) throw new Error('Cannot divide by zero!');
+    return a/b;
+  }
+  if(op==='%'){
+    if(b===0) throw new Error('Cannot modulus by zero!');
+    return a%b;
+  }
+  if(op==='power') return Math.pow(a,b);
+  if(op==='//'){
+    if(b===0) throw new Error('Cannot divide by zero!');
+    return Math.trunc(a/b);
+  }
+  throw new Error('Unknown operation');
+}
+
+function equals(chain=false){
+  if(!op||prev===null) return;
+  const a=parseFloat(prev), b=parseFloat(cur);
+  try{
+    const result=calcLocal(op,a,b);
+    const rounded=Math.round(result*1e10)/1e10;
+    const expr=clean(a)+' '+sym(op)+' '+clean(b);
+    cur=clean(rounded);
+    E().textContent=expr;
+    D().textContent=cur;
+    if(!chain) D().classList.add('res');
+    if(!chain) addHistory(expr, rounded);
+    prev=null; op=null; fresh=true;
+  }catch(e){ showErr(e.message, Err()); }
+}
+
+function backspace(){
+  if(fresh||cur.length<=1){cur='0';fresh=false;}
+  else cur=cur.slice(0,-1);
+  D().textContent=cur;
+}
+
+function clearAll(){
+  cur='0';prev=null;op=null;fresh=false;
+  D().textContent='0';
+  D().classList.remove('res');
+  E().textContent='';
+  Err().textContent='';
+}
+
+// ── SCIENTIFIC (offline) ──
 let sc='0',sp=null,so=null,sf=false;
 const SD=()=>document.getElementById('cur-sci');
 const SE=()=>document.getElementById('expr-sci');
 const SErr=()=>document.getElementById('err-sci');
+
 function pressSci(v){
   SErr().textContent='';
   if(v==='π'){sc=String(Math.PI);sf=false;SD().textContent=sc;return;}
   if(v==='e'){sc=String(Math.E);sf=false;SD().textContent=sc;return;}
-  if(v==='+/-'){sc=String(parseFloat(sc)*-1);SD().textContent=sc;return;}
+  if(v==='+/-'){sc=clean(parseFloat(sc)*-1);SD().textContent=sc;return;}
   if(sf){sc='';sf=false;}
   if(v==='.'&&sc.includes('.'))return;
-  sc=(sc==='0'&&v!=='.')?v:sc+v;SD().textContent=sc;
+  sc=(sc==='0'&&v!=='.')?v:sc+v;
+  SD().textContent=sc;
 }
+
 function setSciOp(o){
   SErr().textContent='';
-  if(sp!==null&&so&&!sf)equalsSci(true);
-  sp=sc;so=o;sf=true;const sd=Number.isInteger(parseFloat(sp))&&!String(sp).includes('.')?sp:clean(parseFloat(sp));SE().textContent=`${sd} ${sym(o)}`;
+  if(sp!==null&&so&&!sf) equalsSci(true);
+  sp=sc; so=o; sf=true;
+  SE().textContent=clean(parseFloat(sp))+' '+sym(o);
 }
-async function sciS(operation){
+
+function calcSciSingle(op, a){
+  if(op==='sqrt'){if(a<0)throw new Error('Cannot sqrt negative!');return Math.sqrt(a);}
+  if(op==='abs') return Math.abs(a);
+  if(op==='sin') return Math.sin(a*Math.PI/180);
+  if(op==='cos') return Math.cos(a*Math.PI/180);
+  if(op==='tan'){if(a%180===90)throw new Error('tan(90°) undefined!');return Math.tan(a*Math.PI/180);}
+  if(op==='log'){if(a<=0)throw new Error('log needs positive number!');return Math.log10(a);}
+  if(op==='ln') {if(a<=0)throw new Error('ln needs positive number!');return Math.log(a);}
+  if(op==='factorial'){
+    if(a<0||a!==Math.trunc(a))throw new Error('Factorial needs non-negative integer!');
+    let r=1;for(let i=2;i<=a;i++)r*=i;return r;
+  }
+  if(op==='square')   return a*a;
+  if(op==='cube')     return a*a*a;
+  if(op==='cube_root')return Math.cbrt(a);
+  if(op==='reciprocal'){if(a===0)throw new Error('Cannot reciprocal zero!');return 1/a;}
+  if(op==='exp')      return Math.exp(a);
+  if(op==='deg_to_rad')return a*Math.PI/180;
+  if(op==='rad_to_deg')return a*180/Math.PI;
+  throw new Error('Unknown: '+op);
+}
+
+function sciS(operation){
   SErr().textContent='';
   try{
-    const r=await post('/calculate',{operation,a:parseFloat(sc)});
-    if(r.error){showErr(r.error,SErr());return;}
-    SE().textContent=r.expression;sc=clean(r.result);SD().textContent=sc;sf=true;loadHistory();
-  }catch(e){showErr('Server error',SErr());}
+    const a=parseFloat(sc);
+    const result=calcSciSingle(operation,a);
+    const rounded=Math.round(result*1e10)/1e10;
+    const expr=operation+'('+clean(a)+')';
+    SE().textContent=expr;
+    sc=clean(rounded);
+    SD().textContent=sc;
+    sf=true;
+    addHistory(expr,rounded);
+  }catch(e){showErr(e.message,SErr());}
 }
-async function equalsSci(chain=false){
-  if(!so||sp===null)return;
-  const map={'+':'add','-':'subtract','*':'multiply','/':'divide','%':'modulus','power':'power'};
+
+function equalsSci(chain=false){
+  if(!so||sp===null) return;
+  const a=parseFloat(sp), b=parseFloat(sc);
   try{
-    const r=await post('/calculate',{operation:map[so]||so,a:parseFloat(sp),b:parseFloat(sc)});
-    if(r.error){showErr(r.error,SErr());return;}
-    SE().textContent=r.expression;sc=clean(r.result);SD().textContent=sc;
-    sp=null;so=null;sf=true;if(!chain)loadHistory();
-  }catch(e){showErr('Server error',SErr());}
+    const result=calcLocal(so,a,b);
+    const rounded=Math.round(result*1e10)/1e10;
+    const expr=clean(a)+' '+sym(so)+' '+clean(b);
+    SE().textContent=expr;
+    sc=clean(rounded);
+    SD().textContent=sc;
+    sp=null;so=null;sf=true;
+    if(!chain)addHistory(expr,rounded);
+  }catch(e){showErr(e.message,SErr());}
 }
+
 function clearSci(){sc='0';sp=null;so=null;sf=false;SD().textContent='0';SE().textContent='';SErr().textContent='';}
 function backspaceSci(){if(sf||sc.length<=1){sc='0';sf=false;}else sc=sc.slice(0,-1);SD().textContent=sc;}
 
-// MATH TAB
+// ── MATH TAB (offline) ──
 function showMathResult(expr,val){
   document.getElementById('mr-expr').textContent=expr;
   document.getElementById('mr-val').textContent=clean(val);
   document.getElementById('math-result-box').classList.add('show');
   document.getElementById('math-err').textContent='';
-  loadHistory();
+  addHistory(expr,val);
 }
 function showMathErr(msg){
   document.getElementById('math-err').textContent=msg;
   document.getElementById('math-result-box').classList.remove('show');
   setTimeout(()=>document.getElementById('math-err').textContent='',2500);
 }
-async function mathSingle(op){
+
+function mathSingle(op){
   const val=document.getElementById('math-single-val').value;
   if(val===''){showMathErr('Please enter a number');return;}
-  const r=await post('/calculate',{operation:op,a:parseFloat(val)});
-  if(r.error)showMathErr(r.error);else showMathResult(r.expression,r.result);
-}
-async function calcGCD(){
-  const a=document.getElementById('gcd-a').value,b=document.getElementById('gcd-b').value;
-  if(!a||!b){showMathErr('Enter both numbers');return;}
-  const r=await post('/math/gcd',{a:parseFloat(a),b:parseFloat(b)});
-  if(r.error)showMathErr(r.error);else showMathResult(r.expression,r.result);
-}
-async function calcLCM(){
-  const a=document.getElementById('gcd-a').value,b=document.getElementById('gcd-b').value;
-  if(!a||!b){showMathErr('Enter both numbers');return;}
-  const r=await post('/math/lcm',{a:parseFloat(a),b:parseFloat(b)});
-  if(r.error)showMathErr(r.error);else showMathResult(r.expression,r.result);
-}
-async function checkPrime(){
-  const n=document.getElementById('prime-val').value;
-  if(!n){showMathErr('Enter a number');return;}
-  const r=await post('/math/prime',{n:parseFloat(n)});
-  if(r.error)showMathErr(r.error);else showMathResult(`Is ${n} prime?`,r.label);
-}
-async function calcPerm(){
-  const n=document.getElementById('pc-n').value,r2=document.getElementById('pc-r').value;
-  if(!n||!r2){showMathErr('Enter both n and r');return;}
-  const r=await post('/math/permutation',{n:parseFloat(n),r:parseFloat(r2)});
-  if(r.error)showMathErr(r.error);else showMathResult(r.expression,r.result);
-}
-async function calcComb(){
-  const n=document.getElementById('pc-n').value,r2=document.getElementById('pc-r').value;
-  if(!n||!r2){showMathErr('Enter both n and r');return;}
-  const r=await post('/math/combination',{n:parseFloat(n),r:parseFloat(r2)});
-  if(r.error)showMathErr(r.error);else showMathResult(r.expression,r.result);
-}
-async function genRandom(){
-  const mn=document.getElementById('rand-min').value;
-  const mx=document.getElementById('rand-max').value;
-  const dc=document.getElementById('rand-dec').value;
-  const r=await post('/math/random',{min:parseFloat(mn),max:parseFloat(mx),decimals:parseInt(dc)||0});
-  if(r.error)showMathErr(r.error);else showMathResult(`random(${mn},${mx})`,r.result);
+  try{
+    const a=parseFloat(val);
+    const result=calcSciSingle(op,a);
+    showMathResult(op+'('+clean(a)+')',result);
+  }catch(e){showMathErr(e.message);}
 }
 
-// UNIT & CURRENCY
-async function convertUnit(){
+function gcdCalc(a,b){a=Math.abs(a);b=Math.abs(b);while(b){let t=b;b=a%b;a=t;}return a;}
+function lcmCalc(a,b){return Math.abs(a*b)/gcdCalc(a,b);}
+
+function calcGCD(){
+  const a=document.getElementById('gcd-a').value,b=document.getElementById('gcd-b').value;
+  if(!a||!b){showMathErr('Enter both numbers');return;}
+  const result=gcdCalc(parseInt(a),parseInt(b));
+  showMathResult('GCD('+a+','+b+')',result);
+}
+function calcLCM(){
+  const a=document.getElementById('gcd-a').value,b=document.getElementById('gcd-b').value;
+  if(!a||!b){showMathErr('Enter both numbers');return;}
+  const result=lcmCalc(parseInt(a),parseInt(b));
+  showMathResult('LCM('+a+','+b+')',result);
+}
+
+function checkPrime(){
+  const n=parseInt(document.getElementById('prime-val').value);
+  if(!n){showMathErr('Enter a number');return;}
+  let prime=n>1;
+  for(let i=2;i<=Math.sqrt(n);i++){if(n%i===0){prime=false;break;}}
+  const label=prime?'Yes ✅':'No ❌';
+  document.getElementById('mr-expr').textContent='Is '+n+' prime?';
+  document.getElementById('mr-val').textContent=label;
+  document.getElementById('math-result-box').classList.add('show');
+  addHistory('isPrime('+n+')',label);
+}
+
+function factorial(n){let r=1;for(let i=2;i<=n;i++)r*=i;return r;}
+function calcPerm(){
+  const n=parseInt(document.getElementById('pc-n').value);
+  const r=parseInt(document.getElementById('pc-r').value);
+  if(isNaN(n)||isNaN(r)){showMathErr('Enter both n and r');return;}
+  if(r>n){showMathErr('r cannot be greater than n');return;}
+  const result=factorial(n)/factorial(n-r);
+  showMathResult('P('+n+','+r+')',result);
+}
+function calcComb(){
+  const n=parseInt(document.getElementById('pc-n').value);
+  const r=parseInt(document.getElementById('pc-r').value);
+  if(isNaN(n)||isNaN(r)){showMathErr('Enter both n and r');return;}
+  if(r>n){showMathErr('r cannot be greater than n');return;}
+  const result=factorial(n)/(factorial(r)*factorial(n-r));
+  showMathResult('C('+n+','+r+')',result);
+}
+
+function genRandom(){
+  const mn=parseFloat(document.getElementById('rand-min').value)||0;
+  const mx=parseFloat(document.getElementById('rand-max').value)||100;
+  const dc=parseInt(document.getElementById('rand-dec').value)||0;
+  if(mn>=mx){showMathErr('Min must be less than Max');return;}
+  const result=dc>0?parseFloat((Math.random()*(mx-mn)+mn).toFixed(dc)):Math.floor(Math.random()*(mx-mn+1))+mn;
+  showMathResult('random('+mn+','+mx+')',result);
+}
+
+// ── UNIT CONVERTER (offline) ──
+const UNITS={
+  'km_to_miles':x=>x*0.621371,'miles_to_km':x=>x*1.60934,
+  'm_to_ft':x=>x*3.28084,'ft_to_m':x=>x/3.28084,
+  'cm_to_inch':x=>x*0.393701,'inch_to_cm':x=>x/0.393701,
+  'kg_to_lb':x=>x*2.20462,'lb_to_kg':x=>x/2.20462,
+  'g_to_oz':x=>x*0.035274,'oz_to_g':x=>x/0.035274,
+  'c_to_f':x=>(x*9/5)+32,'f_to_c':x=>(x-32)*5/9,
+  'c_to_k':x=>x+273.15,'k_to_c':x=>x-273.15,
+  'kmh_to_mph':x=>x*0.621371,'mph_to_kmh':x=>x*1.60934,
+  'ms_to_kmh':x=>x*3.6,'kmh_to_ms':x=>x/3.6,
+  'sqm_to_sqft':x=>x*10.7639,'sqft_to_sqm':x=>x/10.7639,
+  'liter_to_gal':x=>x*0.264172,'gal_to_liter':x=>x/0.264172,
+  'ml_to_floz':x=>x*0.033814,'floz_to_ml':x=>x/0.033814,
+  'mb_to_gb':x=>x/1024,'gb_to_mb':x=>x*1024,
+  'gb_to_tb':x=>x/1024,'tb_to_gb':x=>x*1024
+};
+
+function convertUnit(){
   const val=document.getElementById('unit-val').value;
   const conv=document.getElementById('unit-conv').value;
   if(!val){alert('Enter a value');return;}
-  const r=await post('/convert/unit',{value:parseFloat(val),conversion:conv});
-  if(r.error){document.getElementById('unit-res').textContent='Error';document.getElementById('unit-lbl').textContent=r.error;return;}
-  document.getElementById('unit-res').textContent=r.result;
-  document.getElementById('unit-lbl').textContent=`${val} ${document.getElementById('unit-conv').selectedOptions[0].text}`;
+  const fn=UNITS[conv];
+  if(!fn){document.getElementById('unit-res').textContent='Error';return;}
+  const result=Math.round(fn(parseFloat(val))*1e6)/1e6;
+  document.getElementById('unit-res').textContent=result;
+  document.getElementById('unit-lbl').textContent=val+' '+document.getElementById('unit-conv').selectedOptions[0].text;
 }
+
+// ── CURRENCY (needs internet) ──
 async function convertCurrency(){
   const amt=document.getElementById('cur-amt').value;
   const from=document.getElementById('cur-from').value;
@@ -511,72 +702,44 @@ async function convertCurrency(){
   if(!amt){alert('Enter amount');return;}
   document.getElementById('cur-res').textContent='...';
   document.getElementById('cur-lbl').textContent='Fetching live rates...';
-  const r=await post('/convert/currency',{amount:parseFloat(amt),from,to});
-  if(r.error){document.getElementById('cur-res').textContent='Error';document.getElementById('cur-lbl').textContent=r.error;return;}
-  document.getElementById('cur-res').textContent=`${r.result} ${to}`;
-  document.getElementById('cur-lbl').textContent=`${amt} ${from} • Rate date: ${r.date}`;
+  try{
+    const res=await fetch('/convert/currency',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:parseFloat(amt),from,to})});
+    const r=await res.json();
+    if(r.error){document.getElementById('cur-res').textContent='Error';document.getElementById('cur-lbl').textContent=r.error+' (needs internet)';return;}
+    document.getElementById('cur-res').textContent=r.result+' '+to;
+    document.getElementById('cur-lbl').textContent=amt+' '+from+' • Rate date: '+r.date;
+  }catch(e){
+    document.getElementById('cur-res').textContent='—';
+    document.getElementById('cur-lbl').textContent='No internet — currency needs connection';
+  }
 }
 
-// HISTORY — with delete one by one
-async function loadHistory(){
-  const r=await fetch('/history');const data=await r.json();
-  const list=document.getElementById('hist-list');
-  if(!data.length){list.innerHTML='<li class="empty">No calculations yet</li>';return;}
-  list.innerHTML=data.slice().reverse().map((h,i)=>{
-    const realIndex=data.length-1-i;
-    return `<li>
-      <div class="h-top">
-        <div class="h-time">${h.time||''}</div>
-        <button class="h-del" onclick="deleteOne(${realIndex})" title="Delete this">✕</button>
-      </div>
-      <div class="h-expr">${h.expression}</div>
-      <div class="h-res">= ${h.result}</div>
-    </li>`;
-  }).join('');
-}
-async function deleteOne(index){
-  await fetch(`/history/${index}`,{method:'DELETE'});
-  loadHistory();
-}
-async function clearHistory(){await fetch('/history',{method:'DELETE'});loadHistory();}
-function downloadHistory(){window.location.href='/history/download';}
-
-// HELPER
-async function post(url,body){
-  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  return r.json();
-}
-
-// Clean number — show 15 not 15.0
-function clean(val){
-  const n = parseFloat(val);
-  if(Number.isInteger(n)) return String(Math.trunc(n));
-  return String(val);
-}
-
-// KEYBOARD
+// ── KEYBOARD ──
 document.addEventListener('keydown',e=>{
   if(document.querySelector('.tab.active').textContent.trim()!=='Basic')return;
-  if(e.key>='0'&&e.key<='9')press(e.key);
-  else if(e.key==='.')press('.');
-  else if(e.key==='+')setOp('+');
-  else if(e.key==='-')setOp('-');
-  else if(e.key==='*')setOp('*');
+  if(e.key>='0'&&e.key<='9') press(e.key);
+  else if(e.key==='.') press('.');
+  else if(e.key==='+') setOp('+');
+  else if(e.key==='-') setOp('-');
+  else if(e.key==='*') setOp('*');
   else if(e.key==='/'){e.preventDefault();setOp('/');}
-  else if(e.key==='Enter'||e.key==='=')equals();
-  else if(e.key==='Backspace')backspace();
-  else if(e.key==='Escape')clearAll();
+  else if(e.key==='Enter'||e.key==='=') equals();
+  else if(e.key==='Backspace') backspace();
+  else if(e.key==='Escape') clearAll();
 });
 
+// ── SERVICE WORKER ──
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('/sw.js',{scope:'/'})
+      .then(()=>console.log('Offline ready!'))
+      .catch(e=>console.log('SW error:',e));
+  });
+}
+
+// Init
 loadHistory();
 
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-      navigator.serviceWorker.register('/sw.js', {scope: '/'})
-        .then(function() { console.log('Offline ready!'); })
-        .catch(function(e) { console.log('SW error:', e); });
-    });
-  }
 </script>
 </body>
 </html>
