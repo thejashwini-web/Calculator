@@ -34,7 +34,6 @@ def record(expr, result):
 #  BASIC + SCIENTIFIC MATH
 # ─────────────────────────────────────────────
 def calculate(op, a, b=None):
-    # Basic
     if op == "add":       return a + b
     if op == "subtract":  return a - b
     if op == "multiply":  return a * b
@@ -52,12 +51,10 @@ def calculate(op, a, b=None):
         if a < 0: raise ValueError("Cannot square root a negative number!")
         return math.sqrt(a)
     if op == "abs":       return abs(a)
-
-    # Scientific
-    if op == "sin":        return round(math.sin(math.radians(a)), 10)
-    if op == "cos":        return round(math.cos(math.radians(a)), 10)
+    if op == "sin":       return round(math.sin(math.radians(a)), 10)
+    if op == "cos":       return round(math.cos(math.radians(a)), 10)
     if op == "tan":
-        if a % 180 == 90:  raise ValueError("tan(90°) is undefined!")
+        if a % 180 == 90: raise ValueError("tan(90°) is undefined!")
         return round(math.tan(math.radians(a)), 10)
     if op == "log":
         if a <= 0: raise ValueError("log requires a positive number!")
@@ -70,20 +67,17 @@ def calculate(op, a, b=None):
         return math.factorial(int(a))
     if op == "deg_to_rad": return math.radians(a)
     if op == "rad_to_deg": return math.degrees(a)
-
-    # ── NEW MATH FEATURES ──
     if op == "square":     return a ** 2
     if op == "cube":       return a ** 3
     if op == "cube_root":  return math.copysign(abs(a) ** (1/3), a)
     if op == "reciprocal":
         if a == 0: raise ValueError("Cannot take reciprocal of zero!")
         return 1 / a
-    if op == "exp":        return math.e ** a   # eˣ
-
+    if op == "exp":        return math.e ** a
     raise ValueError(f"Unknown operation: {op}")
 
 # ─────────────────────────────────────────────
-#  ADVANCED MATH (two numbers)
+#  ADVANCED MATH
 # ─────────────────────────────────────────────
 def gcd(a, b):
     a, b = int(abs(a)), int(abs(b))
@@ -168,10 +162,17 @@ def calculate_route():
         symbols = {"add":"+","subtract":"−","multiply":"×","divide":"÷",
                    "power":"^","modulus":"%","floor":"//"}
         singles = ["sqrt","abs","sin","cos","tan","log","ln","factorial",
-                   "deg_to_rad","rad_to_deg","square","cube","cube_root",
-                   "reciprocal","exp"]
+                   "deg_to_rad","rad_to_deg","square","cube","cube_root","reciprocal","exp"]
         expr = f"{op}({a})" if op in singles else f"{a} {symbols.get(op,op)} {b}"
-        result = int(result) if isinstance(result, float) and result.is_integer() else round(result, 10)
+        result = round(result, 10)
+        # Show as integer if whole number (e.g. 15 not 15.0)
+        if isinstance(result, float) and result.is_integer():
+            result = int(result)
+        # Clean expression too (e.g. 9 + 3 not 9.0 + 3.0)
+        if b is not None:
+            a_str = str(int(a)) if isinstance(a, float) and a.is_integer() else str(a)
+            b_str = str(int(b)) if isinstance(b, float) and b.is_integer() else str(b)
+            expr = f"{a_str} {symbols.get(op, op)} {b_str}" if op not in singles else expr
         record(expr, result)
         return jsonify({"result": result, "expression": expr})
     except ValueError as e:
@@ -207,8 +208,7 @@ def prime_route():
     try:
         n      = float(data["n"])
         result = is_prime(n)
-        expr   = f"isPrime({int(n)})"
-        record(expr, "Yes" if result else "No")
+        record(f"isPrime({int(n)})", "Yes" if result else "No")
         return jsonify({"result": result, "label": "Yes ✅" if result else "No ❌"})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -222,8 +222,7 @@ def random_route():
         dec = int(data.get("decimals", 0))
         if mn >= mx: raise ValueError("Min must be less than Max!")
         result = round(random.uniform(mn, mx), dec) if dec > 0 else random.randint(mn, mx)
-        expr   = f"random({mn}, {mx})"
-        record(expr, result)
+        record(f"random({mn},{mx})", result)
         return jsonify({"result": result})
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -256,8 +255,8 @@ def comb_route():
 def unit_convert():
     data = request.get_json()
     try:
-        value  = float(data.get("value", 0))
-        fn     = UNIT_CONVERSIONS.get(data.get("conversion"))
+        value = float(data.get("value", 0))
+        fn    = UNIT_CONVERSIONS.get(data.get("conversion"))
         if not fn: return jsonify({"error": "Unknown conversion"}), 400
         return jsonify({"result": round(fn(value), 6)})
     except Exception as e:
@@ -278,10 +277,11 @@ def currency_convert():
         rate     = rates["rates"].get(to_cur.upper())
         if not rate: raise ValueError(f"Unknown currency: {to_cur}")
         result   = round(amount * rate, 4)
-        return jsonify({"result": result, "date": rates.get("date","")})
+        return jsonify({"result": result, "date": rates.get("date", "")})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+# ── HISTORY ROUTES ──
 @app.route("/history", methods=["GET"])
 def get_history():
     return jsonify(load_history())
@@ -290,6 +290,15 @@ def get_history():
 def clear_history():
     save_history([])
     return jsonify({"message": "History cleared"})
+
+@app.route("/history/<int:index>", methods=["DELETE"])
+def delete_one_history(index):
+    history = load_history()
+    if 0 <= index < len(history):
+        history.pop(index)
+        save_history(history)
+        return jsonify({"message": "Deleted"})
+    return jsonify({"error": "Invalid index"}), 400
 
 @app.route("/history/download", methods=["GET"])
 def download_history():
@@ -300,64 +309,58 @@ def download_history():
     return Response("\n".join(lines), mimetype="text/plain",
                     headers={"Content-Disposition": "attachment; filename=history.txt"})
 
-@app.route("/history/<int:index>", methods=["DELETE"])
-def delete_one_history(index):
-    history = load_history()
-    if 0 <= index < len(history):
-        history.pop(index)
-        save_history(history)
-        return jsonify({"message": "Deleted"})
-    return jsonify({"error": "Invalid index"}), 400
+
 @app.route('/sw.js')
 def service_worker():
-    sw_content = """
-const CACHE = 'calculator-v1';
-const FILES = [
-  '/',
-  '/static/manifest.json'
-];
-
+    sw = """
+const CACHE = 'calc-v2';
 self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(FILES))
-  );
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/'])));
 });
-
+self.addEventListener('activate', e => {
+  self.clients.claim();
+  e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x=>x!==CACHE).map(x=>caches.delete(x)))));
+});
 self.addEventListener('fetch', e => {
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      return cached || fetch(e.request).then(response => {
-        return caches.open(CACHE).then(cache => {
-          cache.put(e.request, response.clone());
-          return response;
-        });
-      }).catch(() => cached);
-    })
-  );
+  if(e.request.method!=='GET') return;
+  const p = new URL(e.request.url).pathname;
+  const api = ['/calculate','/math/','/convert/','/history','/sw.js','/manifest.json'];
+  if(api.some(x=>p.startsWith(x))){
+    if(p==='/sw.js'||p==='/manifest.json'){
+      e.respondWith(caches.match(e.request).then(c=>c||fetch(e.request)));
+    } else {
+      e.respondWith(fetch(e.request).catch(()=>new Response(JSON.stringify({error:'Offline — no internet'}),{headers:{'Content-Type':'application/json'}})));
+    }
+    return;
+  }
+  e.respondWith(caches.match(e.request).then(c=>{
+    return c || fetch(e.request).then(r=>{
+      caches.open(CACHE).then(cache=>cache.put(e.request,r.clone()));
+      return r;
+    });
+  }));
 });
 """
-    from flask import Response
-    return Response(sw_content, mimetype='application/javascript')
+    from flask import Response as R
+    return R(sw.strip(), mimetype='application/javascript', headers={'Service-Worker-Allowed':'/'})
 
 
 @app.route('/manifest.json')
 def manifest():
-    import json
     data = {
         "name": "Calculator",
-        "short_name": "Calculator",
+        "short_name": "Calc",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f0f2f5",
         "theme_color": "#e67e22",
         "icons": [
-            {
-                "src": "https://img.icons8.com/fluency/192/calculator.png",
-                "sizes": "192x192",
-                "type": "image/png"
-            }
+            {"src":"https://img.icons8.com/fluency/192/calculator.png","sizes":"192x192","type":"image/png"},
+            {"src":"https://img.icons8.com/fluency/512/calculator.png","sizes":"512x512","type":"image/png"}
         ]
     }
     return jsonify(data)
+
 if __name__ == "__main__":
     app.run(debug=True)
