@@ -6,6 +6,9 @@
   <title>Calculator</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#e67e22">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Calculator">
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;600;700;900&display=swap" rel="stylesheet"/>
   <style>
     [data-theme="light"] {
@@ -377,7 +380,7 @@ function setOp(o){
   Err().textContent='';
   if(prev!==null&&op&&!fresh)equals(true);
   prev=cur;op=o;fresh=true;
-  E().textContent=`${prev} ${sym(o)}`;
+  const pd=Number.isInteger(parseFloat(prev))&&!String(prev).includes('.')?prev:clean(parseFloat(prev));E().textContent=`${pd} ${sym(o)}`;
 }
 async function equals(chain=false){
   if(!op||prev===null)return;
@@ -411,7 +414,7 @@ function pressSci(v){
 function setSciOp(o){
   SErr().textContent='';
   if(sp!==null&&so&&!sf)equalsSci(true);
-  sp=sc;so=o;sf=true;SE().textContent=`${sp} ${sym(o)}`;
+  sp=sc;so=o;sf=true;const sd=Number.isInteger(parseFloat(sp))&&!String(sp).includes('.')?sp:clean(parseFloat(sp));SE().textContent=`${sd} ${sym(o)}`;
 }
 async function sciS(operation){
   SErr().textContent='';
@@ -566,11 +569,13 @@ document.addEventListener('keydown',e=>{
 });
 
 loadHistory();
-// Offline Support
+
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js')
-      .then(() => console.log('Offline ready!'))
-      .catch(err => console.log('SW error:', err));
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/sw.js', {scope: '/'})
+        .then(function() { console.log('Offline ready!'); })
+        .catch(function(e) { console.log('SW error:', e); });
+    });
   }
 </script>
 </body>
